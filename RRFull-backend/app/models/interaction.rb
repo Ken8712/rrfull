@@ -8,7 +8,7 @@ class Interaction < ApplicationRecord
   validates :code, presence: true, uniqueness: true
   
   # コールバック
-  before_create :generate_code
+  before_validation :generate_code, on: :create
   
   private
   

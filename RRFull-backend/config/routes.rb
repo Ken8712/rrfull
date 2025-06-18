@@ -15,8 +15,8 @@ Rails.application.routes.draw do
   # インタラクション関連のAPI
   resources :interactions, only: [:create, :show] do
     member do
-      get 'counter'
-      patch 'counter'
+      get 'counter', action: :show_counter
+      patch 'counter', action: :update_counter
       patch 'state'
     end
   end
