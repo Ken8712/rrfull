@@ -1,0 +1,1337 @@
+diff --git a/RRFull-backend/app/channels/interaction_channel.rb b/RRFull-backend/app/channels/interaction_channel.rb
+index a7e859d..7ed9dbb 100644
+--- a/RRFull-backend/app/channels/interaction_channel.rb
++++ b/RRFull-backend/app/channels/interaction_channel.rb
+@@ -1,60 +1,78 @@
+ class InteractionChannel < ApplicationCable::Channel
+-  # チャンネルに接続時
+   def subscribed
++    # インタラクションIDを取得
+     interaction = Interaction.find_by(code: params[:interaction_code])
+     
+     if interaction
++      # チャンネルにサブスクライブ
+       stream_from "interaction_#{interaction.id}"
+       
+-      # 接続通知を送信
+-      ActionCable.server.broadcast(
+-        "interaction_#{interaction.id}",
+-        {
+-          type: 'user_joined',
+-          user_id: current_user.id,
+-          user_name: current_user.name
+-        }
+-      )
++      # 接続成功を通知
++      transmit({
++        type: 'connected',
++        message: 'インタラクションチャンネルに接続しました'
++      })
+     else
+       reject
+     end
+   end
+ 
+-  # チャンネルから切断時
+   def unsubscribed
+-    # 必要に応じて切断通知を送信
++    # クリーンアップ処理
++    stop_all_streams
+   end
+   
+-  # タイマーの同期
+-  def sync_timer(data)
++  # クライアントからのメッセージを受信
++  def receive(data)
+     interaction = Interaction.find_by(code: params[:interaction_code])
++    return unless interaction
+     
+-    if interaction
+-      ActionCable.server.broadcast(
+-        "interaction_#{interaction.id}",
+-        {
+-          type: 'timer',
+-          action: data['action'],
+-          time: data['time'],
+-          user_id: current_user.id
+-        }
+-      )
++    case data['action']
++    when 'update_counter'
++      handle_counter_update(interaction, data)
++    when 'update_status'
++      handle_status_update(interaction, data)
++    when 'sync_timer'
++      handle_timer_sync(interaction, data)
+     end
+   end
+   
+-  # 画面遷移の同期
+-  def sync_navigation(data)
+-    interaction = Interaction.find_by(code: params[:interaction_code])
+-    
+-    if interaction
+-      ActionCable.server.broadcast(
+-        "interaction_#{interaction.id}",
+-        {
+-          type: 'navigation',
+-          screen: data['screen'],
+-          user_id: current_user.id
+-        }
+-      )
+-    end
++  private
++  
++  def handle_counter_update(interaction, data)
++    # カウンター更新をブロードキャスト
++    ActionCable.server.broadcast(
++      "interaction_#{interaction.id}",
++      {
++        type: 'counter',
++        user_id: current_user.id,
++        counter: data['counter']
++      }
++    )
++  end
++  
++  def handle_status_update(interaction, data)
++    # ステータス更新をブロードキャスト
++    ActionCable.server.broadcast(
++      "interaction_#{interaction.id}",
++      {
++        type: 'status',
++        user_id: current_user.id,
++        status: data['status']
++      }
++    )
++  end
++  
++  def handle_timer_sync(interaction, data)
++    # タイマー同期をブロードキャスト
++    ActionCable.server.broadcast(
++      "interaction_#{interaction.id}",
++      {
++        type: 'timer',
++        action: data['timer_action'],
++        time: data['time'],
++        user_id: current_user.id
++      }
++    )
+   end
+ end
+\ No newline at end of file
+diff --git a/RRFull-backend/app/serializers/interaction_serializer.rb b/RRFull-backend/app/serializers/interaction_serializer.rb
+index 5e90293..0b3cb0a 100644
+--- a/RRFull-backend/app/serializers/interaction_serializer.rb
++++ b/RRFull-backend/app/serializers/interaction_serializer.rb
+@@ -8,15 +8,31 @@ class InteractionSerializer
+       {
+         id: user.id,
+         name: user.name,
+-        state: interaction.interaction_states.find_by(user: user)&.slice(:status, :counter)
++        email: user.email
++      }
++    end
++  end
++  
++  attribute :states do |interaction, params|
++    interaction.interaction_states.map do |state|
++      {
++        user_id: state.user_id,
++        status: state.status,
++        counter: state.counter,
++        updated_at: state.updated_at
+       }
+     end
+   end
+   
+   attribute :current_user_state do |interaction, params|
+-    if params[:current_user]
++    if params && params[:current_user]
+       state = interaction.interaction_states.find_by(user: params[:current_user])
+-      state&.slice(:status, :counter)
++      if state
++        {
++          status: state.status,
++          counter: state.counter
++        }
++      end
+     end
+   end
+ end
+\ No newline at end of file
+diff --git a/client/public/index.html b/client/public/index.html
+new file mode 100644
+index 0000000..aa069f2
+--- /dev/null
++++ b/client/public/index.html
+@@ -0,0 +1,43 @@
++<!DOCTYPE html>
++<html lang="en">
++  <head>
++    <meta charset="utf-8" />
++    <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
++    <meta name="viewport" content="width=device-width, initial-scale=1" />
++    <meta name="theme-color" content="#000000" />
++    <meta
++      name="description"
++      content="Web site created using create-react-app"
++    />
++    <link rel="apple-touch-icon" href="%PUBLIC_URL%/logo192.png" />
++    <!--
++      manifest.json provides metadata used when your web app is installed on a
++      user's mobile device or desktop. See https://developers.google.com/web/fundamentals/web-app-manifest/
++    -->
++    <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
++    <!--
++      Notice the use of %PUBLIC_URL% in the tags above.
++      It will be replaced with the URL of the `public` folder during the build.
++      Only files inside the `public` folder can be referenced from the HTML.
++
++      Unlike "/favicon.ico" or "favicon.ico", "%PUBLIC_URL%/favicon.ico" will
++      work correctly both with client-side routing and a non-root public URL.
++      Learn how to configure a non-root public URL by running `npm run build`.
++    -->
++    <title>React App</title>
++  </head>
++  <body>
++    <noscript>You need to enable JavaScript to run this app.</noscript>
++    <div id="root"></div>
++    <!--
++      This HTML file is a template.
++      If you open it directly in the browser, you will see an empty page.
++
++      You can add webfonts, meta tags, or analytics to this file.
++      The build step will place the bundled scripts into the <body> tag.
++
++      To begin the development, run `npm start` or `yarn start`.
++      To create a production bundle, use `npm run build` or `yarn build`.
++    -->
++  </body>
++</html>
+diff --git a/client/src/App.js b/client/src/App.js
+new file mode 100644
+index 0000000..7f41651
+--- /dev/null
++++ b/client/src/App.js
+@@ -0,0 +1,52 @@
++import React from 'react';
++import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
++import { AuthProvider, useAuth } from './contexts/AuthContext';
++import Login from './pages/Login';
++import Signup from './pages/Signup';
++import InteractionEntry from './pages/InteractionEntry';
++import InteractionRoom from './pages/InteractionRoom';
++import './App.css';
++
++// 認証が必要なルートのラッパー
++const PrivateRoute = ({ children }) => {
++  const { isAuthenticated, loading } = useAuth();
++  
++  if (loading) {
++    return <div>読み込み中...</div>;
++  }
++  
++  return isAuthenticated ? children : <Navigate to="/login" />;
++};
++
++function App() {
++  return (
++    <AuthProvider>
++      <Router>
++        <div className="App">
++          <Routes>
++            <Route path="/login" element={<Login />} />
++            <Route path="/signup" element={<Signup />} />
++            <Route 
++              path="/" 
++              element={
++                <PrivateRoute>
++                  <InteractionEntry />
++                </PrivateRoute>
++              } 
++            />
++            <Route 
++              path="/interaction/:code" 
++              element={
++                <PrivateRoute>
++                  <InteractionRoom />
++                </PrivateRoute>
++              } 
++            />
++          </Routes>
++        </div>
++      </Router>
++    </AuthProvider>
++  );
++}
++
++export default App;
+\ No newline at end of file
+diff --git a/client/src/App.test.js b/client/src/App.test.js
+new file mode 100644
+index 0000000..1f03afe
+--- /dev/null
++++ b/client/src/App.test.js
+@@ -0,0 +1,8 @@
++import { render, screen } from '@testing-library/react';
++import App from './App';
++
++test('renders learn react link', () => {
++  render(<App />);
++  const linkElement = screen.getByText(/learn react/i);
++  expect(linkElement).toBeInTheDocument();
++});
+diff --git a/client/src/components/Counter.js b/client/src/components/Counter.js
+new file mode 100644
+index 0000000..4611a79
+--- /dev/null
++++ b/client/src/components/Counter.js
+@@ -0,0 +1,47 @@
++import React, { useState, useEffect } from 'react';
++import './Counter.css';
++
++function Counter({ value, onCounterUpdate, remoteValue }) {
++  const [count, setCount] = useState(value || 0);
++  const [isAnimating, setIsAnimating] = useState(false);
++
++  // リモートからのカウンター更新を処理
++  useEffect(() => {
++    if (remoteValue !== undefined && remoteValue !== count) {
++      setCount(remoteValue);
++      // アニメーションを起動
++      setIsAnimating(true);
++      setTimeout(() => setIsAnimating(false), 500);
++    }
++  }, [remoteValue]);
++
++  const handleIncrement = () => {
++    const newCount = count + 1;
++    setCount(newCount);
++    onCounterUpdate(newCount);
++    
++    // アニメーション
++    setIsAnimating(true);
++    setTimeout(() => setIsAnimating(false), 500);
++  };
++
++  return (
++    <div className="counter-container">
++      <h3>共感カウンター</h3>
++      <div className="counter-display">
++        <button 
++          onClick={handleIncrement} 
++          className={`heart-button ${isAnimating ? 'animate' : ''}`}
++        >
++          ❤️
++        </button>
++        <span className="counter-value">{count}</span>
++      </div>
++      <p className="counter-description">
++        ハートをタップして共感を共有
++      </p>
++    </div>
++  );
++}
++
++export default Counter;
+\ No newline at end of file
+diff --git a/client/src/components/StatusIndicator.js b/client/src/components/StatusIndicator.js
+new file mode 100644
+index 0000000..112b747
+--- /dev/null
++++ b/client/src/components/StatusIndicator.js
+@@ -0,0 +1,54 @@
++import React, { useState, useEffect } from 'react';
++import './StatusIndicator.css';
++
++const STATUSES = [
++  { id: 'happy', emoji: '😊', label: 'ハッピー' },
++  { id: 'thinking', emoji: '🤔', label: '考え中' },
++  { id: 'stressed', emoji: '😓', label: 'ストレス' },
++  { id: 'neutral', emoji: '😐', label: 'ふつう' }
++];
++
++function StatusIndicator({ currentStatus, onStatusUpdate, remoteStatus }) {
++  const [selectedStatus, setSelectedStatus] = useState(currentStatus || 'neutral');
++
++  // リモートからのステータス更新を処理
++  useEffect(() => {
++    if (remoteStatus && remoteStatus !== selectedStatus) {
++      setSelectedStatus(remoteStatus);
++    }
++  }, [remoteStatus]);
++
++  const handleStatusSelect = (statusId) => {
++    setSelectedStatus(statusId);
++    onStatusUpdate(statusId);
++  };
++
++  const getCurrentEmoji = () => {
++    const status = STATUSES.find(s => s.id === selectedStatus);
++    return status ? status.emoji : '😐';
++  };
++
++  return (
++    <div className="status-container">
++      <h3>心理状態を共有</h3>
++      <div className="current-status">
++        <span className="current-emoji">{getCurrentEmoji()}</span>
++      </div>
++      <div className="status-options">
++        {STATUSES.map(status => (
++          <button
++            key={status.id}
++            onClick={() => handleStatusSelect(status.id)}
++            className={`status-button ${selectedStatus === status.id ? 'active' : ''}`}
++            title={status.label}
++          >
++            <span className="status-emoji">{status.emoji}</span>
++            <span className="status-label">{status.label}</span>
++          </button>
++        ))}
++      </div>
++    </div>
++  );
++}
++
++export default StatusIndicator;
+\ No newline at end of file
+diff --git a/client/src/components/Timer.js b/client/src/components/Timer.js
+new file mode 100644
+index 0000000..ee11f82
+--- /dev/null
++++ b/client/src/components/Timer.js
+@@ -0,0 +1,92 @@
++import React, { useState, useEffect, useRef } from 'react';
++import './Timer.css';
++
++function Timer({ onTimerUpdate, remoteTimerState }) {
++  const [isRunning, setIsRunning] = useState(false);
++  const [time, setTime] = useState(0);
++  const intervalRef = useRef(null);
++
++  // リモートからのタイマー状態更新を処理
++  useEffect(() => {
++    if (remoteTimerState) {
++      if (remoteTimerState.action === 'start') {
++        setIsRunning(true);
++        setTime(remoteTimerState.time || 0);
++      } else if (remoteTimerState.action === 'stop') {
++        setIsRunning(false);
++        setTime(remoteTimerState.time || time);
++      } else if (remoteTimerState.action === 'reset') {
++        setIsRunning(false);
++        setTime(0);
++      }
++    }
++  }, [remoteTimerState]);
++
++  // タイマーの動作
++  useEffect(() => {
++    if (isRunning) {
++      intervalRef.current = setInterval(() => {
++        setTime(prevTime => prevTime + 1);
++      }, 1000);
++    } else {
++      if (intervalRef.current) {
++        clearInterval(intervalRef.current);
++      }
++    }
++
++    return () => {
++      if (intervalRef.current) {
++        clearInterval(intervalRef.current);
++      }
++    };
++  }, [isRunning]);
++
++  const handleStart = () => {
++    setIsRunning(true);
++    onTimerUpdate({ action: 'start', time });
++  };
++
++  const handleStop = () => {
++    setIsRunning(false);
++    onTimerUpdate({ action: 'stop', time });
++  };
++
++  const handleReset = () => {
++    setIsRunning(false);
++    setTime(0);
++    onTimerUpdate({ action: 'reset', time: 0 });
++  };
++
++  // 時間のフォーマット
++  const formatTime = (seconds) => {
++    const mins = Math.floor(seconds / 60);
++    const secs = seconds % 60;
++    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
++  };
++
++  return (
++    <div className="timer-container">
++      <h3>共有タイマー</h3>
++      <div className="timer-display">
++        <span className="timer-icon">⏱</span>
++        <span className="timer-time">{formatTime(time)}</span>
++      </div>
++      <div className="timer-controls">
++        {!isRunning ? (
++          <button onClick={handleStart} className="timer-button start">
++            開始
++          </button>
++        ) : (
++          <button onClick={handleStop} className="timer-button stop">
++            停止
++          </button>
++        )}
++        <button onClick={handleReset} className="timer-button reset">
++          リセット
++        </button>
++      </div>
++    </div>
++  );
++}
++
++export default Timer;
+\ No newline at end of file
+diff --git a/client/src/config/api.js b/client/src/config/api.js
+new file mode 100644
+index 0000000..12208e6
+--- /dev/null
++++ b/client/src/config/api.js
+@@ -0,0 +1,43 @@
++import axios from 'axios';
++
++// APIのベースURL
++const API_BASE_URL = 'http://localhost:3000';
++
++// axiosインスタンスの作成
++const api = axios.create({
++  baseURL: API_BASE_URL,
++  headers: {
++    'Content-Type': 'application/json',
++  },
++  withCredentials: true,
++});
++
++// リクエストインターセプター（認証トークンの自動付与）
++api.interceptors.request.use(
++  (config) => {
++    const token = localStorage.getItem('token');
++    if (token) {
++      config.headers.Authorization = `Bearer ${token}`;
++    }
++    return config;
++  },
++  (error) => {
++    return Promise.reject(error);
++  }
++);
++
++// レスポンスインターセプター（エラーハンドリング）
++api.interceptors.response.use(
++  (response) => response,
++  (error) => {
++    if (error.response?.status === 401) {
++      // 認証エラーの場合、ログイン画面へリダイレクト
++      localStorage.removeItem('token');
++      window.location.href = '/login';
++    }
++    return Promise.reject(error);
++  }
++);
++
++export default api;
++export { API_BASE_URL };
+\ No newline at end of file
+diff --git a/client/src/config/cable.js b/client/src/config/cable.js
+new file mode 100644
+index 0000000..2f3a507
+--- /dev/null
++++ b/client/src/config/cable.js
+@@ -0,0 +1,12 @@
++import { createConsumer } from '@rails/actioncable';
++import { API_BASE_URL } from './api';
++
++// WebSocket接続の作成
++const createCableConsumer = () => {
++  const token = localStorage.getItem('token');
++  const wsUrl = `${API_BASE_URL.replace('http', 'ws')}/cable${token ? `?token=${token}` : ''}`;
++  
++  return createConsumer(wsUrl);
++};
++
++export default createCableConsumer;
+\ No newline at end of file
+diff --git a/client/src/contexts/AuthContext.js b/client/src/contexts/AuthContext.js
+new file mode 100644
+index 0000000..8392708
+--- /dev/null
++++ b/client/src/contexts/AuthContext.js
+@@ -0,0 +1,110 @@
++import React, { createContext, useState, useContext, useEffect } from 'react';
++import api from '../config/api';
++
++const AuthContext = createContext();
++
++export const useAuth = () => {
++  const context = useContext(AuthContext);
++  if (!context) {
++    throw new Error('useAuth must be used within an AuthProvider');
++  }
++  return context;
++};
++
++export const AuthProvider = ({ children }) => {
++  const [user, setUser] = useState(null);
++  const [loading, setLoading] = useState(true);
++
++  useEffect(() => {
++    const token = localStorage.getItem('token');
++    if (token) {
++      // トークンが存在する場合、ユーザー情報を復元
++      const userData = localStorage.getItem('user');
++      if (userData) {
++        setUser(JSON.parse(userData));
++      }
++    }
++    setLoading(false);
++  }, []);
++
++  // ログイン処理
++  const login = async (email, password) => {
++    try {
++      const response = await api.post('/login', { user: { email, password } });
++      const { user: userData } = response.data;
++      
++      // トークンはレスポンスヘッダーから取得
++      const token = response.headers.authorization?.split(' ')[1];
++      if (token) {
++        localStorage.setItem('token', token);
++        localStorage.setItem('user', JSON.stringify(userData));
++        setUser(userData);
++      }
++      
++      return { success: true };
++    } catch (error) {
++      return { 
++        success: false, 
++        error: error.response?.data?.message || 'ログインに失敗しました' 
++      };
++    }
++  };
++
++  // サインアップ処理
++  const signup = async (name, email, password, passwordConfirmation) => {
++    try {
++      const response = await api.post('/signup', {
++        user: {
++          name,
++          email,
++          password,
++          password_confirmation: passwordConfirmation
++        }
++      });
++      
++      const { user: userData } = response.data;
++      
++      // サインアップ後、自動的にログイン
++      const loginResult = await login(email, password);
++      if (loginResult.success) {
++        return { success: true };
++      }
++      
++      return { success: true, requireLogin: true };
++    } catch (error) {
++      return { 
++        success: false, 
++        error: error.response?.data?.message || 'アカウント作成に失敗しました',
++        errors: error.response?.data?.errors
++      };
++    }
++  };
++
++  // ログアウト処理
++  const logout = async () => {
++    try {
++      await api.delete('/logout');
++    } catch (error) {
++      console.error('ログアウトエラー:', error);
++    } finally {
++      localStorage.removeItem('token');
++      localStorage.removeItem('user');
++      setUser(null);
++    }
++  };
++
++  const value = {
++    user,
++    loading,
++    login,
++    signup,
++    logout,
++    isAuthenticated: !!user
++  };
++
++  return (
++    <AuthContext.Provider value={value}>
++      {children}
++    </AuthContext.Provider>
++  );
++};
+\ No newline at end of file
+diff --git a/client/src/index.js b/client/src/index.js
+new file mode 100644
+index 0000000..d563c0f
+--- /dev/null
++++ b/client/src/index.js
+@@ -0,0 +1,17 @@
++import React from 'react';
++import ReactDOM from 'react-dom/client';
++import './index.css';
++import App from './App';
++import reportWebVitals from './reportWebVitals';
++
++const root = ReactDOM.createRoot(document.getElementById('root'));
++root.render(
++  <React.StrictMode>
++    <App />
++  </React.StrictMode>
++);
++
++// If you want to start measuring performance in your app, pass a function
++// to log results (for example: reportWebVitals(console.log))
++// or send to an analytics endpoint. Learn more: https://bit.ly/CRA-vitals
++reportWebVitals();
+diff --git a/client/src/pages/InteractionEntry.js b/client/src/pages/InteractionEntry.js
+new file mode 100644
+index 0000000..2a9479e
+--- /dev/null
++++ b/client/src/pages/InteractionEntry.js
+@@ -0,0 +1,112 @@
++import React, { useState } from 'react';
++import { useNavigate } from 'react-router-dom';
++import { useAuth } from '../contexts/AuthContext';
++import api from '../config/api';
++import './InteractionEntry.css';
++
++function InteractionEntry() {
++  const [code, setCode] = useState('');
++  const [loading, setLoading] = useState(false);
++  const [error, setError] = useState('');
++  const { user, logout } = useAuth();
++  const navigate = useNavigate();
++
++  // 新しいインタラクションを作成
++  const handleCreateInteraction = async () => {
++    setLoading(true);
++    setError('');
++    
++    try {
++      const response = await api.post('/interactions');
++      const { interaction } = response.data;
++      navigate(`/interaction/${interaction.code}`);
++    } catch (error) {
++      setError('セッションの作成に失敗しました');
++    } finally {
++      setLoading(false);
++    }
++  };
++
++  // 既存のインタラクションに参加
++  const handleJoinInteraction = async (e) => {
++    e.preventDefault();
++    
++    if (code.length !== 6) {
++      setError('セッションコードは6文字で入力してください');
++      return;
++    }
++    
++    setLoading(true);
++    setError('');
++    
++    try {
++      // セッション情報を取得して参加
++      await api.get(`/interactions/${code}`);
++      navigate(`/interaction/${code}`);
++    } catch (error) {
++      if (error.response?.status === 404) {
++        setError('セッションが見つかりません');
++      } else {
++        setError('参加に失敗しました');
++      }
++    } finally {
++      setLoading(false);
++    }
++  };
++
++  return (
++    <div className="entry-container">
++      <div className="entry-header">
++        <h1>RRFull</h1>
++        <div className="user-info">
++          <span>こんにちは、{user?.name}さん</span>
++          <button onClick={logout} className="logout-button">
++            ログアウト
++          </button>
++        </div>
++      </div>
++
++      <div className="entry-content">
++        <div className="entry-card">
++          <h2>新しいセッションを開始</h2>
++          <p>2人でリアルタイムコミュニケーションを始めましょう</p>
++          <button 
++            onClick={handleCreateInteraction}
++            disabled={loading}
++            className="create-button"
++          >
++            セッションを作成
++          </button>
++        </div>
++
++        <div className="divider">または</div>
++
++        <div className="entry-card">
++          <h2>セッションに参加</h2>
++          <p>相手から共有されたコードを入力してください</p>
++          <form onSubmit={handleJoinInteraction}>
++            <input
++              type="text"
++              value={code}
++              onChange={(e) => setCode(e.target.value.toUpperCase())}
++              placeholder="6文字のコード"
++              maxLength={6}
++              className="code-input"
++            />
++            <button 
++              type="submit"
++              disabled={loading || code.length !== 6}
++              className="join-button"
++            >
++              参加する
++            </button>
++          </form>
++        </div>
++
++        {error && <div className="error-message">{error}</div>}
++      </div>
++    </div>
++  );
++}
++
++export default InteractionEntry;
+\ No newline at end of file
+diff --git a/client/src/pages/InteractionRoom.js b/client/src/pages/InteractionRoom.js
+new file mode 100644
+index 0000000..57c7f01
+--- /dev/null
++++ b/client/src/pages/InteractionRoom.js
+@@ -0,0 +1,219 @@
++import React, { useState, useEffect, useRef } from 'react';
++import { useParams, useNavigate } from 'react-router-dom';
++import { useAuth } from '../contexts/AuthContext';
++import Timer from '../components/Timer';
++import Counter from '../components/Counter';
++import StatusIndicator from '../components/StatusIndicator';
++import api from '../config/api';
++import createCableConsumer from '../config/cable';
++import './InteractionRoom.css';
++
++function InteractionRoom() {
++  const { code } = useParams();
++  const navigate = useNavigate();
++  const { user } = useAuth();
++  
++  const [interaction, setInteraction] = useState(null);
++  const [loading, setLoading] = useState(true);
++  const [error, setError] = useState('');
++  const [connected, setConnected] = useState(false);
++  
++  // リモート状態
++  const [remoteTimerState, setRemoteTimerState] = useState(null);
++  const [remoteCounter, setRemoteCounter] = useState(0);
++  const [remoteStatus, setRemoteStatus] = useState('neutral');
++  
++  // WebSocket関連
++  const cableRef = useRef(null);
++  const subscriptionRef = useRef(null);
++
++  // インタラクション情報を取得
++  useEffect(() => {
++    const fetchInteraction = async () => {
++      try {
++        const response = await api.get(`/interactions/${code}`);
++        setInteraction(response.data.interaction);
++        
++        // 初期状態を設定
++        const currentUserState = response.data.interaction.current_user_state;
++        if (currentUserState) {
++          setRemoteCounter(currentUserState.counter);
++          setRemoteStatus(currentUserState.status);
++        }
++        
++        setLoading(false);
++      } catch (error) {
++        setError('セッションの読み込みに失敗しました');
++        setLoading(false);
++      }
++    };
++
++    fetchInteraction();
++  }, [code]);
++
++  // WebSocket接続を確立
++  useEffect(() => {
++    if (!interaction) return;
++
++    // Action Cableの接続を作成
++    cableRef.current = createCableConsumer();
++    
++    // チャンネルに接続
++    subscriptionRef.current = cableRef.current.subscriptions.create(
++      { channel: 'InteractionChannel', interaction_code: code },
++      {
++        connected() {
++          console.log('WebSocket接続成功');
++          setConnected(true);
++        },
++        
++        disconnected() {
++          console.log('WebSocket接続終了');
++          setConnected(false);
++        },
++        
++        received(data) {
++          console.log('受信データ:', data);
++          
++          // 自分自身の更新は無視
++          if (data.user_id === user.id) return;
++          
++          // データタイプに応じて処理
++          switch (data.type) {
++            case 'timer':
++              setRemoteTimerState({
++                action: data.action,
++                time: data.time
++              });
++              break;
++              
++            case 'counter':
++              setRemoteCounter(data.counter);
++              break;
++              
++            case 'status':
++              setRemoteStatus(data.status);
++              break;
++              
++            default:
++              break;
++          }
++        }
++      }
++    );
++
++    // クリーンアップ
++    return () => {
++      if (subscriptionRef.current) {
++        subscriptionRef.current.unsubscribe();
++      }
++      if (cableRef.current) {
++        cableRef.current.disconnect();
++      }
++    };
++  }, [interaction, code, user.id]);
++
++  // タイマー更新を送信
++  const handleTimerUpdate = (timerData) => {
++    if (subscriptionRef.current) {
++      subscriptionRef.current.send({
++        action: 'sync_timer',
++        timer_action: timerData.action,
++        time: timerData.time
++      });
++    }
++  };
++
++  // カウンター更新を送信
++  const handleCounterUpdate = async (newValue) => {
++    try {
++      await api.patch(`/interactions/${code}/counter`, { counter: newValue });
++    } catch (error) {
++      console.error('カウンター更新エラー:', error);
++    }
++  };
++
++  // ステータス更新を送信
++  const handleStatusUpdate = async (newStatus) => {
++    try {
++      await api.patch(`/interactions/${code}/state`, { status: newStatus });
++    } catch (error) {
++      console.error('ステータス更新エラー:', error);
++    }
++  };
++
++  // セッションを離れる
++  const handleLeaveSession = () => {
++    if (window.confirm('セッションを離れますか？')) {
++      navigate('/');
++    }
++  };
++
++  if (loading) {
++    return <div className="loading">読み込み中...</div>;
++  }
++
++  if (error) {
++    return (
++      <div className="error-container">
++        <p>{error}</p>
++        <button onClick={() => navigate('/')}>戻る</button>
++      </div>
++    );
++  }
++
++  return (
++    <div className="room-container">
++      <div className="room-header">
++        <div className="room-info">
++          <h1>セッション: {code}</h1>
++          <div className="connection-status">
++            <span className={`status-dot ${connected ? 'connected' : 'disconnected'}`}></span>
++            {connected ? '接続中' : '接続待機中'}
++          </div>
++        </div>
++        <button onClick={handleLeaveSession} className="leave-button">
++          セッションを離れる
++        </button>
++      </div>
++
++      <div className="room-participants">
++        <h3>参加者</h3>
++        <div className="participants-list">
++          {interaction?.users?.map(participant => (
++            <div key={participant.id} className="participant">
++              <span className="participant-icon">👤</span>
++              <span className="participant-name">
++                {participant.name}
++                {participant.id === user.id && ' (あなた)'}
++              </span>
++            </div>
++          ))}
++        </div>
++      </div>
++
++      <div className="room-content">
++        <div className="components-grid">
++          <Timer 
++            onTimerUpdate={handleTimerUpdate}
++            remoteTimerState={remoteTimerState}
++          />
++          
++          <StatusIndicator
++            currentStatus={interaction?.current_user_state?.status || 'neutral'}
++            onStatusUpdate={handleStatusUpdate}
++            remoteStatus={remoteStatus}
++          />
++          
++          <Counter
++            value={interaction?.current_user_state?.counter || 0}
++            onCounterUpdate={handleCounterUpdate}
++            remoteValue={remoteCounter}
++          />
++        </div>
++      </div>
++    </div>
++  );
++}
++
++export default InteractionRoom;
+\ No newline at end of file
+diff --git a/client/src/pages/Login.js b/client/src/pages/Login.js
+new file mode 100644
+index 0000000..9866df1
+--- /dev/null
++++ b/client/src/pages/Login.js
+@@ -0,0 +1,76 @@
++import React, { useState } from 'react';
++import { Link, useNavigate } from 'react-router-dom';
++import { useAuth } from '../contexts/AuthContext';
++import './Auth.css';
++
++function Login() {
++  const [email, setEmail] = useState('');
++  const [password, setPassword] = useState('');
++  const [error, setError] = useState('');
++  const [loading, setLoading] = useState(false);
++  
++  const { login } = useAuth();
++  const navigate = useNavigate();
++
++  const handleSubmit = async (e) => {
++    e.preventDefault();
++    setError('');
++    setLoading(true);
++
++    const result = await login(email, password);
++    
++    if (result.success) {
++      navigate('/');
++    } else {
++      setError(result.error);
++    }
++    
++    setLoading(false);
++  };
++
++  return (
++    <div className="auth-container">
++      <div className="auth-card">
++        <h1>ログイン</h1>
++        <form onSubmit={handleSubmit}>
++          {error && <div className="error-message">{error}</div>}
++          
++          <div className="form-group">
++            <label htmlFor="email">メールアドレス</label>
++            <input
++              type="email"
++              id="email"
++              value={email}
++              onChange={(e) => setEmail(e.target.value)}
++              required
++              placeholder="example@email.com"
++            />
++          </div>
++
++          <div className="form-group">
++            <label htmlFor="password">パスワード</label>
++            <input
++              type="password"
++              id="password"
++              value={password}
++              onChange={(e) => setPassword(e.target.value)}
++              required
++              placeholder="パスワードを入力"
++            />
++          </div>
++
++          <button type="submit" disabled={loading} className="submit-button">
++            {loading ? 'ログイン中...' : 'ログイン'}
++          </button>
++        </form>
++
++        <p className="auth-link">
++          アカウントをお持ちでない方は
++          <Link to="/signup">新規登録</Link>
++        </p>
++      </div>
++    </div>
++  );
++}
++
++export default Login;
+\ No newline at end of file
+diff --git a/client/src/pages/Signup.js b/client/src/pages/Signup.js
+new file mode 100644
+index 0000000..d781ab7
+--- /dev/null
++++ b/client/src/pages/Signup.js
+@@ -0,0 +1,165 @@
++import React, { useState } from 'react';
++import { Link, useNavigate } from 'react-router-dom';
++import { useAuth } from '../contexts/AuthContext';
++import './Auth.css';
++
++function Signup() {
++  const [formData, setFormData] = useState({
++    name: '',
++    email: '',
++    password: '',
++    passwordConfirmation: ''
++  });
++  const [errors, setErrors] = useState({});
++  const [loading, setLoading] = useState(false);
++  
++  const { signup } = useAuth();
++  const navigate = useNavigate();
++
++  const handleChange = (e) => {
++    const { name, value } = e.target;
++    setFormData(prev => ({
++      ...prev,
++      [name]: value
++    }));
++  };
++
++  const validateForm = () => {
++    const newErrors = {};
++    
++    if (!formData.name.trim()) {
++      newErrors.name = '名前を入力してください';
++    }
++    
++    if (!formData.email.trim()) {
++      newErrors.email = 'メールアドレスを入力してください';
++    }
++    
++    if (formData.password.length < 6) {
++      newErrors.password = 'パスワードは6文字以上で入力してください';
++    }
++    
++    if (formData.password !== formData.passwordConfirmation) {
++      newErrors.passwordConfirmation = 'パスワードが一致しません';
++    }
++    
++    setErrors(newErrors);
++    return Object.keys(newErrors).length === 0;
++  };
++
++  const handleSubmit = async (e) => {
++    e.preventDefault();
++    
++    if (!validateForm()) {
++      return;
++    }
++    
++    setLoading(true);
++
++    const result = await signup(
++      formData.name,
++      formData.email,
++      formData.password,
++      formData.passwordConfirmation
++    );
++    
++    if (result.success) {
++      if (result.requireLogin) {
++        navigate('/login');
++      } else {
++        navigate('/');
++      }
++    } else {
++      if (result.errors) {
++        // サーバーからのエラーメッセージを表示
++        setErrors({ general: result.errors.join('、') });
++      } else {
++        setErrors({ general: result.error });
++      }
++    }
++    
++    setLoading(false);
++  };
++
++  return (
++    <div className="auth-container">
++      <div className="auth-card">
++        <h1>新規登録</h1>
++        <form onSubmit={handleSubmit}>
++          {errors.general && <div className="error-message">{errors.general}</div>}
++          
++          <div className="form-group">
++            <label htmlFor="name">お名前</label>
++            <input
++              type="text"
++              id="name"
++              name="name"
++              value={formData.name}
++              onChange={handleChange}
++              required
++              placeholder="山田太郎"
++              className={errors.name ? 'error' : ''}
++            />
++            {errors.name && <span className="field-error">{errors.name}</span>}
++          </div>
++
++          <div className="form-group">
++            <label htmlFor="email">メールアドレス</label>
++            <input
++              type="email"
++              id="email"
++              name="email"
++              value={formData.email}
++              onChange={handleChange}
++              required
++              placeholder="example@email.com"
++              className={errors.email ? 'error' : ''}
++            />
++            {errors.email && <span className="field-error">{errors.email}</span>}
++          </div>
++
++          <div className="form-group">
++            <label htmlFor="password">パスワード</label>
++            <input
++              type="password"
++              id="password"
++              name="password"
++              value={formData.password}
++              onChange={handleChange}
++              required
++              placeholder="6文字以上で入力"
++              className={errors.password ? 'error' : ''}
++            />
++            {errors.password && <span className="field-error">{errors.password}</span>}
++          </div>
++
++          <div className="form-group">
++            <label htmlFor="passwordConfirmation">パスワード（確認）</label>
++            <input
++              type="password"
++              id="passwordConfirmation"
++              name="passwordConfirmation"
++              value={formData.passwordConfirmation}
++              onChange={handleChange}
++              required
++              placeholder="もう一度パスワードを入力"
++              className={errors.passwordConfirmation ? 'error' : ''}
++            />
++            {errors.passwordConfirmation && <span className="field-error">{errors.passwordConfirmation}</span>}
++          </div>
++
++          <button type="submit" disabled={loading} className="submit-button">
++            {loading ? '登録中...' : '登録する'}
++          </button>
++        </form>
++
++        <p className="auth-link">
++          既にアカウントをお持ちの方は
++          <Link to="/login">ログイン</Link>
++        </p>
++      </div>
++    </div>
++  );
++}
++
++export default Signup;
+\ No newline at end of file
+diff --git a/client/src/reportWebVitals.js b/client/src/reportWebVitals.js
+new file mode 100644
+index 0000000..5253d3a
+--- /dev/null
++++ b/client/src/reportWebVitals.js
+@@ -0,0 +1,13 @@
++const reportWebVitals = onPerfEntry => {
++  if (onPerfEntry && onPerfEntry instanceof Function) {
++    import('web-vitals').then(({ getCLS, getFID, getFCP, getLCP, getTTFB }) => {
++      getCLS(onPerfEntry);
++      getFID(onPerfEntry);
++      getFCP(onPerfEntry);
++      getLCP(onPerfEntry);
++      getTTFB(onPerfEntry);
++    });
++  }
++};
++
++export default reportWebVitals;
+diff --git a/client/src/setupTests.js b/client/src/setupTests.js
+new file mode 100644
+index 0000000..8f2609b
+--- /dev/null
++++ b/client/src/setupTests.js
+@@ -0,0 +1,5 @@
++// jest-dom adds custom jest matchers for asserting on DOM nodes.
++// allows you to do things like:
++// expect(element).toHaveTextContent(/react/i)
++// learn more: https://github.com/testing-library/jest-dom
++import '@testing-library/jest-dom';
