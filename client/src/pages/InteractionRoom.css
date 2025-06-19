@@ -1,0 +1,170 @@
+/* インタラクションルームのスタイル */
+.room-container {
+  min-height: 100vh;
+  background-color: #f5f5f5;
+}
+
+.room-header {
+  background-color: white;
+  padding: 20px 40px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.room-info h1 {
+  color: #4CAF50;
+  margin: 0 0 10px 0;
+  font-size: 24px;
+}
+
+.connection-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #666;
+  font-size: 14px;
+}
+
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.status-dot.connected {
+  background-color: #4CAF50;
+  animation: pulse 2s infinite;
+}
+
+.status-dot.disconnected {
+  background-color: #f44336;
+}
+
+@keyframes pulse {
+  0% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+.leave-button {
+  padding: 10px 20px;
+  background-color: #f44336;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.3s;
+}
+
+.leave-button:hover {
+  background-color: #da190b;
+}
+
+.room-participants {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.room-participants h3 {
+  color: #333;
+  margin-bottom: 15px;
+}
+
+.participants-list {
+  display: flex;
+  gap: 15px;
+  flex-wrap: wrap;
+}
+
+.participant {
+  background: white;
+  padding: 10px 15px;
+  border-radius: 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+}
+
+.participant-icon {
+  font-size: 16px;
+}
+
+.participant-name {
+  color: #333;
+  font-size: 14px;
+}
+
+.room-content {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.components-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 30px;
+  margin-bottom: 40px;
+}
+
+.loading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  font-size: 18px;
+  color: #666;
+}
+
+.error-container {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  color: #f44336;
+}
+
+.error-container button {
+  margin-top: 20px;
+  padding: 10px 20px;
+  background-color: #4CAF50;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+/* レスポンシブ対応 */
+@media (max-width: 768px) {
+  .room-header {
+    padding: 15px 20px;
+    flex-direction: column;
+    gap: 15px;
+    align-items: flex-start;
+  }
+  
+  .room-participants {
+    padding: 15px 20px;
+  }
+  
+  .room-content {
+    padding: 15px 20px;
+  }
+  
+  .components-grid {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+}

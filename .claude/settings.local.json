@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(rails generate:*)",
-      "Bash(rails:*)"
+      "Bash(rails:*)",
+      "Bash(ls:*)"
     ],
     "deny": []
   }
