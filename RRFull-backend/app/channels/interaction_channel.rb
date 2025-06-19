@@ -1,60 +1,78 @@
 class InteractionChannel < ApplicationCable::Channel
-  # チャンネルに接続時
   def subscribed
+    # インタラクションIDを取得
     interaction = Interaction.find_by(code: params[:interaction_code])
     
     if interaction
+      # チャンネルにサブスクライブ
       stream_from "interaction_#{interaction.id}"
       
-      # 接続通知を送信
-      ActionCable.server.broadcast(
-        "interaction_#{interaction.id}",
-        {
-          type: 'user_joined',
-          user_id: current_user.id,
-          user_name: current_user.name
-        }
-      )
+      # 接続成功を通知
+      transmit({
+        type: 'connected',
+        message: 'インタラクションチャンネルに接続しました'
+      })
     else
       reject
     end
   end
 
-  # チャンネルから切断時
   def unsubscribed
-    # 必要に応じて切断通知を送信
+    # クリーンアップ処理
+    stop_all_streams
   end
   
-  # タイマーの同期
-  def sync_timer(data)
+  # クライアントからのメッセージを受信
+  def receive(data)
     interaction = Interaction.find_by(code: params[:interaction_code])
+    return unless interaction
     
-    if interaction
-      ActionCable.server.broadcast(
-        "interaction_#{interaction.id}",
-        {
-          type: 'timer',
-          action: data['action'],
-          time: data['time'],
-          user_id: current_user.id
-        }
-      )
+    case data['action']
+    when 'update_counter'
+      handle_counter_update(interaction, data)
+    when 'update_status'
+      handle_status_update(interaction, data)
+    when 'sync_timer'
+      handle_timer_sync(interaction, data)
     end
   end
   
-  # 画面遷移の同期
-  def sync_navigation(data)
-    interaction = Interaction.find_by(code: params[:interaction_code])
-    
-    if interaction
-      ActionCable.server.broadcast(
-        "interaction_#{interaction.id}",
-        {
-          type: 'navigation',
-          screen: data['screen'],
-          user_id: current_user.id
-        }
-      )
-    end
+  private
+  
+  def handle_counter_update(interaction, data)
+    # カウンター更新をブロードキャスト
+    ActionCable.server.broadcast(
+      "interaction_#{interaction.id}",
+      {
+        type: 'counter',
+        user_id: current_user.id,
+        counter: data['counter']
+      }
+    )
+  end
+  
+  def handle_status_update(interaction, data)
+    # ステータス更新をブロードキャスト
+    ActionCable.server.broadcast(
+      "interaction_#{interaction.id}",
+      {
+        type: 'status',
+        user_id: current_user.id,
+        status: data['status']
+      }
+    )
+  end
+  
+  def handle_timer_sync(interaction, data)
+    # タイマー同期をブロードキャスト
+    ActionCable.server.broadcast(
+      "interaction_#{interaction.id}",
+      {
+        type: 'timer',
+        action: data['timer_action'],
+        time: data['time'],
+        user_id: current_user.id
+      }
+    )
   end
 end

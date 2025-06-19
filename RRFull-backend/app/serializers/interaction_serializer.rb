@@ -8,15 +8,31 @@ class InteractionSerializer
       {
         id: user.id,
         name: user.name,
-        state: interaction.interaction_states.find_by(user: user)&.slice(:status, :counter)
+        email: user.email
+      }
+    end
+  end
+  
+  attribute :states do |interaction, params|
+    interaction.interaction_states.map do |state|
+      {
+        user_id: state.user_id,
+        status: state.status,
+        counter: state.counter,
+        updated_at: state.updated_at
       }
     end
   end
   
   attribute :current_user_state do |interaction, params|
-    if params[:current_user]
+    if params && params[:current_user]
       state = interaction.interaction_states.find_by(user: params[:current_user])
-      state&.slice(:status, :counter)
+      if state
+        {
+          status: state.status,
+          counter: state.counter
+        }
+      end
     end
   end
 end
